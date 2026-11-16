@@ -16,7 +16,8 @@ import streamlit as st
 
 st.set_page_config(page_title="Тестове за парамедици", page_icon="🚑", layout="wide")
 
-DATA_FILE = Path(__file__).parent / "questions.json"
+APP_DIR = Path(__file__).parent
+DATA_FILE = APP_DIR / "questions.json"
 LETTERS = ["А", "Б", "В", "Г", "Д", "Е"]
 
 
@@ -108,6 +109,13 @@ def section_pairs(s):
 def go_home():
     ss.view = "home"
     ss.quiz = None
+
+
+def show_image(q):
+    """Показва картинката на въпроса, ако има поле "image" (път спрямо папката на приложението)."""
+    img = q.get("image")
+    if img and (APP_DIR / img).exists():
+        st.image(str(APP_DIR / img))
 
 
 def q_of(item):
@@ -213,6 +221,7 @@ def view_quiz():
         st.caption(BY_ID[item["sid"]]["title"])
 
     st.markdown(f'<div class="qtext">{q["question"]}</div>', unsafe_allow_html=True)
+    show_image(q)
 
     perm = item["perm"]
     labels = [f"{LETTERS[k]}) {q['options'][orig]}" for k, orig in enumerate(perm)]
@@ -302,6 +311,7 @@ def view_results():
         for it, a in wrong:
             q = q_of(it)
             with st.expander(q["question"]):
+                show_image(q)
                 given = q["options"][a] if a is not None else "—"
                 st.markdown(f"❌ **Вашият отговор:** {given}")
                 st.markdown(f"✅ **Верен отговор:** {q['options'][q['answer']]}")
