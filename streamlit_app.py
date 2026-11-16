@@ -21,12 +21,13 @@ LETTERS = ["А", "Б", "В", "Г", "Д", "Е"]
 
 
 @st.cache_data
-def load_sections():
+def load_sections(mtime):
+    # mtime (час на последна промяна) кара кеша да се обнови при всяка редакция на questions.json
     with open(DATA_FILE, encoding="utf-8") as f:
         return json.load(f)
 
 
-SECTIONS = load_sections()
+SECTIONS = load_sections(DATA_FILE.stat().st_mtime)
 BY_ID = {s["id"]: s for s in SECTIONS}
 TOTAL_Q = sum(len(s["questions"]) for s in SECTIONS)
 

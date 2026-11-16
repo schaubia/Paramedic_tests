@@ -95,6 +95,15 @@ def start_quiz(title, pairs, mode, key):
     ss.view = "quiz"
 
 
+def section_pairs(s):
+    """Случайни въпроси от раздела – толкова, колкото е избрано в страничната лента."""
+    pairs = [(s["id"], i) for i in range(len(s["questions"]))]
+    n = ss.get("per_quiz", 15)
+    if n == "Всички" or n >= len(pairs):
+        return pairs
+    return random.sample(pairs, n)
+
+
 def go_home():
     ss.view = "home"
     ss.quiz = None
@@ -107,6 +116,9 @@ def q_of(item):
 # ---------- странична лента ----------
 with st.sidebar:
     st.markdown("### 🚑 Разделите")
+    st.select_slider("Въпроси в упражнение", options=[10, 15, 20, 25, "Всички"],
+                     value=15, key="per_quiz",
+                     help="При всеки опит се теглят различни случайни въпроси от раздела.")
     if st.button("Начало", use_container_width=True):
         go_home()
         st.rerun()
@@ -114,7 +126,7 @@ with st.sidebar:
         best = ss.best.get(s["id"])
         label = f"{s['n']} · {s['title']}" + (f"  ({best}%)" if best is not None else "")
         if st.button(label, key=f"side_{s['id']}", use_container_width=True):
-            start_quiz(s["title"], [(s["id"], i) for i in range(len(s["questions"]))], "practice", s["id"])
+            start_quiz(s["title"], section_pairs(s), "practice", s["id"])
             st.rerun()
     st.caption(f"{TOTAL_Q} въпроса в {len(SECTIONS)} раздела")
 
@@ -151,7 +163,8 @@ def view_home():
                 st.rerun()
 
     st.markdown("#### Упражнения по раздели")
-    st.caption("Веднага след всеки отговор виждате дали е верен, обяснение и източник.")
+    st.caption("Веднага след всеки отговор виждате дали е верен, обяснение и източник. "
+               "Всеки опит тегли различни случайни въпроси – броя избирате в страничната лента.")
     cols = st.columns(3)
     for i, s in enumerate(SECTIONS):
         with cols[i % 3]:
@@ -166,7 +179,7 @@ def view_home():
                 st.progress((best or 0) / 100,
                             text=f"Най-добър резултат: {best}%" if best is not None else f"{len(s['questions'])} въпроса")
                 if st.button("Започни", key=f"go_{s['id']}", use_container_width=True):
-                    start_quiz(s["title"], [(s["id"], j) for j in range(len(s["questions"]))], "practice", s["id"])
+                    start_quiz(s["title"], section_pairs(s), "practice", s["id"])
                     st.rerun()
 
     st.markdown(
