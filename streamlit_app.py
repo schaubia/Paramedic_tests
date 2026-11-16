@@ -75,7 +75,8 @@ def build_items(pairs):
     random.shuffle(pairs)
     items = []
     for sid, qi in pairs:
-        n = len(BY_ID[sid]["questions"][qi]["options"])
+        qq = BY_ID[sid]["questions"][qi]
+        n = len(qq.get("options") or qq.get("items") or [])
         perm = list(range(n))
         random.shuffle(perm)
         items.append({"sid": sid, "qi": qi, "perm": perm})
@@ -120,6 +121,42 @@ def show_image(q):
 
 def q_of(item):
     return BY_ID[item["sid"]]["questions"][item["qi"]]
+
+
+def qtype(q):
+    return q.get("type", "choice")  # "choice" (избор), "calc" (число), "order" (подреждане)
+
+
+def fmt_num(x):
+    return f"{x:g}".replace(".", ",")
+
+
+def is_correct(q, a):
+    if a is None:
+        return False
+    if qtype(q) == "calc":
+        return abs(float(a) - float(q["value"])) <= float(q.get("tolerance", 0)) + 1e-9
+    if qtype(q) == "order":
+        return list(a) == list(q["items"])
+    return a == q["answer"]
+
+
+def correct_text(q):
+    if qtype(q) == "calc":
+        return f"{fmt_num(q['value'])} {q.get('unit', '')}".strip()
+    if qtype(q) == "order":
+        return " → ".join(q["items"])
+    return q["options"][q["answer"]]
+
+
+def given_text(q, a):
+    if a is None:
+        return "—"
+    if qtype(q) == "calc":
+        return f"{fmt_num(a)} {q.get('unit', '')}".strip()
+    if qtype(q) == "order":
+        return " → ".join(a)
+    return q["options"][a]
 
 
 # ---------- странична лента ----------
@@ -224,25 +261,42 @@ def view_quiz():
     show_image(q)
 
     perm = item["perm"]
-    labels = [f"{LETTERS[k]}) {q['options'][orig]}" for k, orig in enumerate(perm)]
-    choice = st.radio("Изберете отговор", options=list(range(len(perm))),
-                      format_func=lambda k: labels[k], index=None,
-                      key=f"r_{qz['uid']}_{idx}", label_visibility="collapsed",
-                      disabled=qz["checked"])
-    chosen_orig = perm[choice] if choice is not None else None
+    key = f"r_{qz['uid']}_{idx}"
+    if qtype(q) == "calc":
+        st.caption("Въведете число" + (f" в {q['unit']}" if q.get("unit") else "") + ".")
+        val = st.number_input("Вашият отговор", value=None, step=0.01, format="%g", min_value=0.0,
+                              key=key, disabled=qz["checked"], placeholder="напр. 2800")
+        chosen_orig = val
+    elif qtype(q) == "order":
+        st.caption("Кликнете елементите един по един в правилния ред. Грешно избран елемент махате с ✕.")
+        shuffled = [q["items"][i] for i in perm]
+        sel = st.multiselect("Вашата подредба", options=shuffled, key=key, disabled=qz["checked"],
+                             placeholder="Изберете първия елемент…")
+        st.markdown("  \n".join(f"**{n}.** {x}" for n, x in enumerate(sel, 1)) or " ")
+        chosen_orig = sel if len(sel) == len(q["items"]) else None
+    else:
+        labels = [f"{LETTERS[k]}) {q['options'][orig]}" for k, orig in enumerate(perm)]
+        choice = st.radio("Изберете отговор", options=list(range(len(perm))),
+                          format_func=lambda k: labels[k], index=None,
+                          key=key, label_visibility="collapsed",
+                          disabled=qz["checked"])
+        chosen_orig = perm[choice] if choice is not None else None
     last = idx == total - 1
 
     if qz["mode"] == "practice":
         if not qz["checked"]:
-            if st.button("Провери", type="primary", disabled=choice is None):
+            if st.button("Провери", type="primary", disabled=chosen_orig is None):
                 qz["answers"].append(chosen_orig)
                 qz["checked"] = True
                 st.rerun()
         else:
             given = qz["answers"][idx]
-            ok = given == q["answer"]
-            correct_letter = LETTERS[perm.index(q["answer"])]
-            head = "✓ Вярно." if ok else f"✗ Грешно. Верният отговор е {correct_letter}) {q['options'][q['answer']]}."
+            ok = is_correct(q, given)
+            if qtype(q) == "choice":
+                right = f"{LETTERS[perm.index(q['answer'])]}) {correct_text(q)}"
+            else:
+                right = correct_text(q)
+            head = "✓ Вярно." if ok else f"✗ Грешно. Верният отговор е: {right}."
             st.markdown(
                 f'<div class="fb {"ok" if ok else "bad"}"><b>{head}</b><br>{q["explanation"]}'
                 f'<br><span class="src">Източник: {q["source"]}</span></div>',
@@ -251,7 +305,7 @@ def view_quiz():
             if st.button("Към резултата →" if last else "Следващ въпрос →", type="primary"):
                 advance(last)
     else:
-        if st.button("Предай изпита" if last else "Следващ →", type="primary", disabled=choice is None):
+        if st.button("Предай изпита" if last else "Следващ →", type="primary", disabled=chosen_orig is None):
             qz["answers"].append(chosen_orig)
             advance(last)
 
@@ -260,7 +314,7 @@ def advance(last):
     qz = ss.quiz
     if last:
         qz["finished"] = time.time()
-        correct = sum(1 for it, a in zip(qz["items"], qz["answers"]) if a == q_of(it)["answer"])
+        correct = sum(1 for it, a in zip(qz["items"], qz["answers"]) if is_correct(q_of(it), a))
         pct = round(100 * correct / len(qz["items"]))
         if qz["key"] in BY_ID:
             ss.best[qz["key"]] = max(pct, ss.best.get(qz["key"], 0))
@@ -276,7 +330,7 @@ def view_results():
     qz = ss.quiz
     items, answers = qz["items"], qz["answers"]
     total = len(items)
-    wrong = [(it, a) for it, a in zip(items, answers) if a != q_of(it)["answer"]]
+    wrong = [(it, a) for it, a in zip(items, answers) if not is_correct(q_of(it), a)]
     correct = total - len(wrong)
     pct = round(100 * correct / total)
     mins, secs = divmod(int(qz.get("finished", time.time()) - qz["started"]), 60)
@@ -312,9 +366,8 @@ def view_results():
             q = q_of(it)
             with st.expander(q["question"]):
                 show_image(q)
-                given = q["options"][a] if a is not None else "—"
-                st.markdown(f"❌ **Вашият отговор:** {given}")
-                st.markdown(f"✅ **Верен отговор:** {q['options'][q['answer']]}")
+                st.markdown(f"❌ **Вашият отговор:** {given_text(q, a)}")
+                st.markdown(f"✅ **Верен отговор:** {correct_text(q)}")
                 st.markdown(q["explanation"])
                 st.caption(f"Източник: {q['source']} · Раздел: {BY_ID[it['sid']]['title']}")
     else:
