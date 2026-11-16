@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import streamlit as st
+from PIL import Image, ImageDraw
 
 st.set_page_config(page_title="Тестове за парамедици", page_icon="🚑", layout="wide")
 
@@ -119,6 +120,23 @@ def show_image(q):
         st.image(str(APP_DIR / img))
 
 
+POINT_W = 420  # ширина на схемата на екрана (px)
+
+
+def marked_image(q, pt=None, show_targets=False):
+    """Схемата с кликнатата точка и (след проверка) правилните зони."""
+    im = Image.open(APP_DIR / q["image"]).convert("RGB")
+    dr = ImageDraw.Draw(im)
+    if show_targets:
+        for tx, ty, r in q["targets"]:
+            dr.ellipse([tx - r, ty - r, tx + r, ty + r], outline=(46, 125, 50), width=5)
+    if pt:
+        x, y = pt
+        col = (46, 125, 50) if (show_targets and is_correct(q, pt)) else (198, 40, 40)
+        dr.ellipse([x - 10, y - 10, x + 10, y + 10], fill=col, outline="white", width=3)
+    return im
+
+
 def q_of(item):
     return BY_ID[item["sid"]]["questions"][item["qi"]]
 
@@ -138,6 +156,9 @@ def is_correct(q, a):
         return abs(float(a) - float(q["value"])) <= float(q.get("tolerance", 0)) + 1e-9
     if qtype(q) == "order":
         return list(a) == list(q["items"])
+    if qtype(q) == "point":
+        x, y = a
+        return any((x - tx) ** 2 + (y - ty) ** 2 <= r ** 2 for tx, ty, r in q["targets"])
     return a == q["answer"]
 
 
@@ -146,6 +167,8 @@ def correct_text(q):
         return f"{fmt_num(q['value'])} {q.get('unit', '')}".strip()
     if qtype(q) == "order":
         return " → ".join(q["items"])
+    if qtype(q) == "point":
+        return q.get("target_label", "зелената зона на схемата")
     return q["options"][q["answer"]]
 
 
@@ -156,6 +179,8 @@ def given_text(q, a):
         return f"{fmt_num(a)} {q.get('unit', '')}".strip()
     if qtype(q) == "order":
         return " → ".join(a)
+    if qtype(q) == "point":
+        return "кликнато място извън правилната зона (червената точка)"
     return q["options"][a]
 
 
@@ -258,7 +283,8 @@ def view_quiz():
         st.caption(BY_ID[item["sid"]]["title"])
 
     st.markdown(f'<div class="qtext">{q["question"]}</div>', unsafe_allow_html=True)
-    show_image(q)
+    if qtype(q) != "point":
+        show_image(q)
 
     perm = item["perm"]
     key = f"r_{qz['uid']}_{idx}"
@@ -267,6 +293,22 @@ def view_quiz():
         val = st.number_input("Вашият отговор", value=None, step=0.01, format="%g", min_value=0.0,
                               key=key, disabled=qz["checked"], placeholder="напр. 2800")
         chosen_orig = val
+    elif qtype(q) == "point":
+        from streamlit_image_coordinates import streamlit_image_coordinates
+        pkey = f"pt_{key}"
+        pt = ss.get(pkey)
+        if not qz["checked"]:
+            st.caption("Кликнете върху мястото на схемата. Можете да кликнете отново, за да смените точката.")
+            res = streamlit_image_coordinates(marked_image(q, pt), width=POINT_W, key=key)
+            if res and res.get("width"):
+                im_w, im_h = Image.open(APP_DIR / q["image"]).size
+                new_pt = (round(res["x"] * im_w / res["width"]), round(res["y"] * im_h / res["height"]))
+                if new_pt != pt:
+                    ss[pkey] = new_pt
+                    st.rerun()
+        else:
+            st.image(marked_image(q, pt, show_targets=qz["mode"] == "practice"), width=POINT_W)
+        chosen_orig = pt
     elif qtype(q) == "order":
         st.caption("Кликнете елементите един по един в правилния ред. Грешно избран елемент махате с ✕.")
         shuffled = [q["items"][i] for i in perm]
@@ -365,7 +407,10 @@ def view_results():
         for it, a in wrong:
             q = q_of(it)
             with st.expander(q["question"]):
-                show_image(q)
+                if qtype(q) == "point":
+                    st.image(marked_image(q, a, show_targets=True), width=POINT_W)
+                else:
+                    show_image(q)
                 st.markdown(f"❌ **Вашият отговор:** {given_text(q, a)}")
                 st.markdown(f"✅ **Верен отговор:** {correct_text(q)}")
                 st.markdown(q["explanation"])
